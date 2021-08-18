@@ -1,2 +1,2 @@
 # cv
-Perosnal details
+Perosnal details in basic html 
