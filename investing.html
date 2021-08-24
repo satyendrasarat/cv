@@ -1,0 +1,729 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<title>TradingView Chart</title>
+<meta http-equiv="Pragma" content="No-Cache">
+<meta http-equiv="Cache-Control" content="No-Cache">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,minimum-scale=1.0">
+<script src="//streamjs.investing.com/js/2.0.2/sockjs.min.js"></script>
+<script type="text/javascript" src="jquery-2.1.0.min.js"></script>
+<script type="text/javascript" src="charting_library.min.js"></script>
+<script type="text/javascript" src="datafeed/udf/datafeed.js"></script>
+<script type="text/javascript" src="static/langArray.js"></script>
+<script>
+
+			function getTopParent(w) {
+				w = w || window;
+				return w.parent === w ? w : getTopParent(w.parent);
+			}
+
+            passMessageToParent = function(message){
+		message = JSON.parse(message);
+
+                var parentWindow = getTopParent(window);
+				// params = document.referrer.split('&');
+
+				var origin  = location.search.split('&').reduce(function (acc, item) {
+					var split = item.split('=');
+					return acc || (split[0] === 'site' ? split[1] : '');
+				}, '') || 'https://www.investing.com';
+
+                try{
+                    parentWindow.postMessage( message, origin );
+                } catch (error) {
+                    console.log(error.message,message);
+                }
+            }
+
+		</script>
+
+<script>
+
+				getParams = function() {
+
+					var paramsStr = window.location.search.substr( 1 );
+					return ((( paramsStr != null ) && ( paramsStr != '' ))? parseParams( paramsStr ) : {} );
+				};
+
+				parseParams = function( _paramsStr ) {
+
+					var params = {};
+					var paramArr = _paramsStr.split( '&' );
+
+					for( var i = 0; i < paramArr.length; i++ ) {
+
+						var tmparr = paramArr[ i ].split( '=' );
+						params[ tmparr[ 0 ] ] = tmparr[ 1 ];
+					}
+
+					return params;
+				};
+
+				getWatchlistItems = function(){
+
+					var serverUrl = 'https://tvc.investing.com/' + _params.carrier + '/' + _params.time + '/' + _params.domain_ID +'/'+ _params.lang_ID +'/'+_params.timezone_ID+'/watchlist?user='+_params.user;
+					jQuery.ajax({
+				        url: serverUrl,
+				        data:{watchlist:_params.watchlist},
+				        method:"POST",
+				        success: function (result) {
+				            var jsonData = $.parseJSON(result);
+				            if(Object.keys(jsonData).length > 0){
+				            	wl_show = true;
+						for(x in jsonData){
+				            		//console.log(x);
+				            		wl_symbols+='"'+jsonData[x].name+'",';
+				            		wl_pairIds.push(jsonData[x].id);
+				            		wl_data[jsonData[x].id] = {'name':jsonData[x].name,'description':jsonData[x].description,'exchange':jsonData[x].exchange};
+				            	}
+				            }
+				        },
+				        async: false
+				    });
+				}
+
+        getJsonFilesContent = function(jsonUrl)
+        {
+            var result = {};
+            $.ajax({
+                async: false,
+                url: jsonUrl,
+                success: function( data ) {
+                    result = data;
+                }
+            });
+
+            return result;
+        }
+
+				var _params = getParams();
+				var wl_data = {};
+				var wl_symbols = "";
+				var wl_pairIds = [];
+				var wl_show = false;
+        var euDomains = [4,5,7,8,9,10,13,30,31,32,36,37,50,54];
+        var siteData = {};
+        siteData.isEu = false;
+
+				if(_params.user.length != 0 && !isNaN(_params.user.length) && _params.watchlist.length != 0){
+					getWatchlistItems();
+				}
+
+                var tvcTranslations = {};
+                if(langsToTranslations[_params.lang_ID]){
+			tvcTranslations = getJsonFilesContent("static/localization/translations/"+langsToTranslations[_params.lang_ID]);
+                }
+
+        var tvcDefines = getJsonFilesContent("static/tvc_defines.json");
+
+
+
+				window.timezoneOffset = 0;
+				window.TimeZoneID = _params.timezone_ID;
+				window.stream = _params.sock_srv;
+
+			</script>
+<script type="text/javascript" src="socket/sockjs.min.js"></script>
+<script type="text/javascript" src="socket/socket_connector.js"></script>
+<script>window.uid = 0</script>
+
+<script>
+
+		window.tvcSavedData = {pairs:[],watchlist:[],symbolsInfo:[]};
+
+			var currInterval;
+			var candleMin = {};
+			var candleMax = {};
+			var candleOpen = {};
+			var isNewCandle = false;
+			var pairs = [];
+			var sock;
+			var $allowRetry = true;
+			var forceSaveLastCandles = false;
+			var identifier;
+
+			fixTickTimestamp = function(res,ts,identifier){
+
+				//window.tvcSavedData[identifier].resolution = res;
+
+				var date = new Date(ts*1000);
+				var year = date.getFullYear();
+				var month = date.getMonth();
+				var day = date.getDate();
+				var hour = date.getHours();
+				var minutes = date.getMinutes();
+				var fixedCandleTime;
+				var dateWithoutSeconds = new Date(year,month,day,hour,minutes);
+				var daysInMonth = new Date(year, month + 1, 0).getDate();
+
+				ts = dateWithoutSeconds.getTime()/1000;
+				//console.log(window.tvcSavedData);
+				//console.log('switch:'+res);
+				switch(res){
+					case '1': // 1 minute
+						currInterval = 60;
+					break;
+					case '5': // 5 minutes
+						currInterval = 300;
+					break;
+					case '15': // 5 minutes
+						currInterval = 900;
+					break;
+					case '30': // 30 minutes
+						currInterval = 1800;
+					break;
+					case '45': // 45 minutes
+						currInterval = 2700;
+					break;
+					case '60': // 1 hour
+						currInterval = 3600;
+					break;
+					case '300': // 5 hour
+						currInterval = 18000;
+					break;
+					case 'D': // 1 day
+						currInterval = 86400;
+					break;
+					case 'W': // 1 week
+						currInterval = 86400 * 7;
+					break;
+					case 'M': // 1 month
+						currInterval = daysInMonth * 86400;
+					break;
+				}
+
+				isNewCandle = false;
+				fixedCandleTime = window.tvcSavedData[identifier].l.t;
+				if(ts >= window.tvcSavedData[identifier].l.t + currInterval){
+					isNewCandle = true;
+					fixedCandleTime = window.tvcSavedData[identifier].l.t + currInterval;
+				}
+
+				return fixedCandleTime;
+			}
+
+			calculateCandleValues = function(pid_obj,ts,identifier) {
+
+				//console.log('isNewCandle:'+isNewCandle);
+				//console.log('window.tvcSavedData.l.t:'+ window.tvcSavedData[listenerGUID].l.t);
+				//console.log('interval:'+ currInterval);
+
+
+				if(isNewCandle){
+					candleMin[identifier] = pid_obj.last_numeric;
+		            candleMax[identifier] = pid_obj.last_numeric;
+		            candleOpen[identifier] = pid_obj.last_numeric;
+
+		            window.tvcSavedData[identifier].p = window.tvcSavedData[identifier].l; //move last candle to previous (one before last)
+
+		            window.tvcSavedData[identifier].l.l = pid_obj.last_numeric;
+		            window.tvcSavedData[identifier].l.h = pid_obj.last_numeric;
+		            window.tvcSavedData[identifier].l.o = pid_obj.last_numeric;
+		            window.tvcSavedData[identifier].l.c = pid_obj.last_numeric;
+		            window.tvcSavedData[identifier].l.t = ts;
+		            if(window.tvcSavedData[identifier].hasVolume){
+		            	window.tvcSavedData[identifier].l.vo += window.tvcSavedData[identifier].l.v;
+		            }
+				}else{
+					window.tvcSavedData[identifier].l.l = candleMin[identifier] ? getCandleMin(pid_obj,identifier, window.tvcSavedData[identifier].l.l) : window.tvcSavedData[identifier].l.l,
+		            window.tvcSavedData[identifier].l.h = candleMax[identifier] ? getCandleMax(pid_obj,identifier, window.tvcSavedData[identifier].l.h) : window.tvcSavedData[identifier].l.h,
+		            window.tvcSavedData[identifier].l.o = candleOpen[identifier] ? candleOpen[identifier] : window.tvcSavedData[identifier].l.o;
+		            window.tvcSavedData[identifier].l.c = pid_obj.last_numeric;
+				}
+
+				if(window.tvcSavedData[identifier].hasVolume){
+					window.tvcSavedData[identifier].l.v = calculateVolume(pid_obj.turnover_numeric);
+					//console.log('calculated volume:',window.tvcSavedData[identifier].l.v);
+				}
+			}
+
+			function calculateVolume(turnover_numeric){
+
+				if(turnover_numeric == 0){
+					return 0;
+				}
+
+				return turnover_numeric - window.tvcSavedData[identifier].l.vo;
+			}
+
+			function getCandleMin(pid_obj,identifier, open) {
+		        if (open < candleMin[identifier]) {
+		            candleMin[identifier] = open;
+		        }
+
+		        if (pid_obj.last_numeric < candleMin[identifier]) {
+		            candleMin[identifier] = pid_obj.last_numeric;
+		        }
+
+		        return candleMin[identifier];
+		    }
+
+			function getCandleMax(pid_obj,identifier, open) {
+		        if (open > candleMax[identifier]) {
+		            candleMax[identifier] = open;
+		        }
+
+		        if (pid_obj.last_numeric > candleMax[identifier]) {
+		            candleMax[identifier] = pid_obj.last_numeric;
+		        }
+
+		        return candleMax[identifier];
+		    }
+
+			Datafeeds.UDFCompatibleDatafeed.prototype.subscribeBars = function(symbolInfo, resolution, onRealtimeCallback, listenerGUID) {
+
+				identifier = symbolInfo.ticker + ',' + resolution;
+
+            window.tvcSavedData.symbolsInfo[symbolInfo.name].pair_ID = symbolInfo.ticker;
+            window.tvcSavedData.symbolsInfo[symbolInfo.name].identifier = identifier;
+
+				if(window.tvcSavedData.pairs.indexOf("pid-"+symbolInfo.ticker+":") == -1){
+					window.tvcSavedData.pairs.push("pid-"+symbolInfo.ticker+":");
+					if(!$allowRetry){
+						$(window).trigger('socketNewData',[["pid-"+symbolInfo.ticker+":"]]);
+					}
+				}
+
+				window.tvcSavedData[identifier].stopSaveLastCandles = false;
+
+				if($allowRetry){
+					if(sock != null && typeof(sock) !== 'undefined'){
+						sock.close();
+					}
+
+					var allPairs = window.tvcSavedData.pairs;
+					if(window.tvcSavedData.watchlist.length > 0){
+						allPairs = window.tvcSavedData.pairs.concat(window.tvcSavedData.watchlist);
+					}
+
+					$(window).trigger("socketRetry",[allPairs]);
+					$allowRetry = false;
+				}
+
+				$(window).on('socketMessage', function(e, pid_obj){
+					if(window.tvcSavedData.pairs.indexOf("pid-"+pid_obj.pid+":") == -1){
+						return false;
+					}
+					//console.log('BARS:',pid_obj);
+					identifier = pid_obj.pid + ',' + resolution;
+
+					if(typeof(window.tvcSavedData[identifier]) !== 'object'){
+						window.tvcSavedData[identifier] = {
+							stopSaveLastCandles:false,
+							curr_pid:pid_obj.pid,
+							l:{},
+							p:{}
+						};
+					}
+
+					var ts = fixTickTimestamp(resolution,pid_obj.timestamp,identifier);
+					calculateCandleValues(pid_obj,ts,identifier);
+
+					var barValue = {};
+					barValue.time = window.tvcSavedData[identifier].l.t*1000;
+					barValue.close = window.tvcSavedData[identifier].l.c;
+					barValue.open = window.tvcSavedData[identifier].l.o;
+					barValue.high = window.tvcSavedData[identifier].l.h;
+					barValue.low = window.tvcSavedData[identifier].l.l;
+					barValue.volume = window.tvcSavedData[identifier].l.v;
+
+                if(window.tvcSavedData.symbolsInfo[symbolInfo.name].identifier == identifier){
+                    window.tvcSavedData.symbolsInfo[symbolInfo.name].close = window.tvcSavedData[identifier].l.c;
+                }
+
+					if(symbolInfo.ticker == pid_obj.pid ){
+						onRealtimeCallback(barValue); // insert candle into chart
+					}
+				});
+			};
+
+        Datafeeds.UDFCompatibleDatafeed.prototype.unsubscribeBars = function(listenerGUID) {};
+
+			Datafeeds.UDFCompatibleDatafeed.prototype.subscribeQuotes = function(symbols, fastSymbols, onRealtimeCallback, listenerGUID) {
+				var added_new_symbol = false;
+				for (i in wl_pairIds) {
+					//console.log('window.tvcSavedData.pairs',wl_pairIds[i],window.tvcSavedData.pairs.indexOf("pid-"+wl_pairIds[i]+":"));
+					if(window.tvcSavedData.watchlist.indexOf("pid-"+wl_pairIds[i]+":") == -1){
+						window.tvcSavedData.watchlist.push("pid-"+wl_pairIds[i]+":");
+						//console.log(wl_pairIds[i] + ' was added to window.tvcSavedData.pairs array!');
+						added_new_symbol = true;
+					}
+				}
+
+				if(!added_new_symbol){
+					return false;
+				}
+
+				$(window).on('socketMessage', function(e, pid_obj){
+					if(window.tvcSavedData.watchlist.indexOf("pid-"+pid_obj.pid+":") == -1){
+						return false;
+					}
+					//console.log('QUOTES:',pid_obj);
+					var q_val  = {};
+
+					q_val.s = "ok";
+					q_val.n = wl_data[pid_obj.pid].name;
+					q_val.v = {};
+
+					q_val.v.ch = pid_obj.pc;
+					q_val.v.chp = pid_obj.pcp.replace(/\+|\%/gi, "");
+					q_val.v.short_name = pid_obj.pid;
+					q_val.v.exchange = wl_data[pid_obj.pid].exchange;
+					q_val.v.description = wl_data[pid_obj.pid].description;
+					q_val.v.lp = pid_obj.last_numeric;
+					q_val.v.ask = pid_obj.ask;
+					q_val.v.bid = pid_obj.bid;
+					q_val.v.spread = "";
+					q_val.v.open_price = "";
+					q_val.v.high_price = pid_obj.high;
+					q_val.v.low_price = pid_obj.low;
+					q_val.v.prev_close_price = "";
+					q_val.v.volume = pid_obj.volume_turnover;
+					//q_val.d.push(bugoga);
+					//console.log(q_val);
+					onRealtimeCallback([q_val]);
+				});
+			};
+
+			Datafeeds.UDFCompatibleDatafeed.prototype.unsubscribeQuotes = function(listenerGUID) {
+				//console.log('unsubscribeQuotes');
+			};
+
+		</script>
+</head>
+<body style="margin:0; padding:0">
+<div id="tv_chart_container"></div>
+<script type="text/javascript">
+
+			$( document ).ready( function(){
+
+                if(_params['geoc'] == 'CN') {
+                    cdnPath = 'tvc-cncdn.investing.com';
+                } else {
+                    cdnPath = 'tvc-invdn-com.investing.com';
+                }
+
+				if(location.protocol == "https:"){
+                    cdnPath = 'https://' + cdnPath;
+                } else {
+                    cdnPath = 'http://' + cdnPath;
+				}
+
+				var widget;
+				var timeframesArrayStr;
+				//console.log(_params);
+				var upColor;
+				var upBorderColor;
+				var upVolumeColor;
+
+				var downColor;
+				var downBorderColor;
+				var downVolumeColor;
+
+				var prefix = _params['prefix'] || 'www';
+				var inet_prefix = _params['family_prefix'];
+				var siteUrl = '//' + prefix + '.investing.com/';
+				var baseUrl = '//' + inet_prefix + '.investing.com/' + _params[ 'carrier' ] + '/' + _params[ 'time' ] + '/' + _params[ 'domain_ID' ] + '/' + _params[ 'lang_ID' ] + '/' + _params[ 'timezone_ID' ];
+				var storageUrl = _params['user'] ? '"' + baseUrl + '"' : 'null';
+
+
+				if( _params[ 'session' ] == '24x7' ) {
+
+					style = '"mainSeriesProperties.style": 1,';
+					timeframesArrayStr = '{ text:"10y", resolution: "M" }, { text: "5y", resolution: "M" }, { text: "3y", resolution: "W" }, { text: "1y", resolution: "W" },{ text: "3m", resolution: "D" },{ text: "1m", resolution: "300" },{ text: "7d", resolution: "60" },{ text: "1d", resolution: "15" },';
+				}
+				else {
+
+					style = '"mainSeriesProperties.style": 3,';
+					timeframesArrayStr = '{ text:"10y", resolution: "M" }, { text: "5y", resolution: "M" },{ text: "3y", resolution: "W" }, { text: "1y", resolution: "W" },{ text: "3m", resolution: "D" },{ text: "1m", resolution: "300" },{ text: "7d", resolution: "60" },{ text: "1d", resolution: "15" },';
+				}
+
+                if(_params['init_page'] == 'instrument'){
+                    timeframesArrayStr = '{ text:"10y", resolution: "M" }, { text: "1y", resolution: "W" },{ text: "1m", resolution: "300" },{ text: "7d", resolution: "60" },{ text: "1d", resolution: "15" },';
+                }else if (_params['init_page']  == 'live-charts'){
+                    timeframesArrayStr = '{ text:"10y", resolution: "M" }, { text: "3y", resolution: "W" }, { text: "1y", resolution: "W" },{ text: "1m", resolution: "300" },{ text: "7d", resolution: "60" },{ text: "1d", resolution: "15" },';
+                }
+
+
+                if( _params[ 'suffix' ] == '_kr' ) {
+
+                    upColor 		= '"#ff0000"';
+                    upBorderColor	= '"#5b1a13"';
+                    upVolumeColor	= '"#BB2222"';
+
+                    downColor 		= '"#00AAFF"';
+                    downBorderColor = '"#223754"';
+                    downVolumeColor = '"#2222BB"';
+                }else if( _params[ 'suffix' ] == '_cn_jp' ) {
+
+                    upColor 		= '"#ff6960"';
+                    upBorderColor	= '"#5b1a13"';
+                    upVolumeColor	= '"#ff6960"';
+
+                    downColor 		= '"#00ca73"';
+                    downBorderColor = '"#225437"';
+                    downVolumeColor = '"#00ca73"';
+                } else {
+                    upColor 		= '"#00ca73"';
+                    upBorderColor 	= '"#225437"';
+                    upVolumeColor 	= '"#00ca73"';
+
+                    downColor 		= '"#ff6960"';
+                    downBorderColor = '"#5b1a13"';
+                    downVolumeColor = '"#ff6960"';
+                }
+
+				var storage = '';
+                var intervals = 'intervals: [ "M", "D", "60", "5"],';
+
+                if(wl_show){
+                    intervals = 'intervals: [ "5", "15", "60", "D", "M"],';
+                }else if(_params['init_page'] == 'live-charts'){
+                    intervals = 'intervals: [ "M", "W", "D", "240", "60", "30", "5", "15"],';
+                }
+
+
+                if( Number( _params[ 'user' ] ) && Number( _params[ 'client' ] ) ) {
+					storage = 'charts_storage_url: ' + storageUrl + ', client_id: ' + _params[ 'client' ] + ', user_id: "' + _params[ 'user' ] + '",';
+				}
+
+				var uberString = ' \
+					\
+					TradingView.onready(function(){ \
+						\
+						var widget = new TradingView.widget({ \
+							symbol: ' + _params[ 'pair_ID' ] + ', \
+							interval: "' + _params[ 'interval' ] + '", \
+							fullscreen: true, \
+							container_id: "tv_chart_container", \
+							library_path: "' + cdnPath + '/web/' + _params[ 'version' ] + '/", \
+							enabled_features: [ "right_bar_stays_on_scroll", "minimalistic_logo", "move_logo_to_main_pane", "narrow_chart_enabled", "header_saveload", "header_screenshot","show_logo_on_all_charts" ], \
+							disabled_features: [ "use_localstorage_for_settings", "volume_force_overlay", "link_to_tradingview", "header_interval_dialog_button", "header_fullscreen_button","study_templates","chart_property_page_trading","chart_crosshair_menu"], \
+							studies_access: { type:"black", tools:[ { name:"Correlation Coeff", grayed:false } ] }, \
+							drawings_access: { type:"black", tools:[ { name:"Regression Trend", grayed:false } ] }, \
+							locale: "' + _params[ 'locale' ] + '", \
+							timezone: "' + _params[ 'timezone' ] + '", \
+							snapshot_url: "' + baseUrl + '/snapshot", \
+							datafeed: new Datafeeds.UDFCompatibleDatafeed("' + baseUrl + '", 8000 ), \
+							symbol_search_request_delay:750, \
+							' + storage + ' \
+							overrides: { \
+								' + style + ' \
+								"volumePaneSize": "medium", \
+								"symbolWatermarkProperties.color":"#ffffff", \
+								"symbolWatermarkProperties.transparency": 100, \
+								"paneProperties.topMargin": 10, \
+								"paneProperties.background": "#ffffff", \
+								"paneProperties.vertGridProperties.color": "#ffffff",\
+								"paneProperties.horzGridProperties.color": "#ffffff", \
+								"mainSeriesProperties.areaStyle.color1": "#c5e6f8" ,\
+								"mainSeriesProperties.areaStyle.color2": "#c5e6f8" ,\
+								"mainSeriesProperties.areaStyle.linecolor": "#89bdee" ,\
+								"mainSeriesProperties.areaStyle.linestyle": 0 , \
+								"mainSeriesProperties.areaStyle.linewidth": 2 , \
+								"mainSeriesProperties.candleStyle.upColor": ' + upColor + ', \
+								"mainSeriesProperties.candleStyle.downColor": ' + downColor + ', \
+								"mainSeriesProperties.candleStyle.drawWick": true, \
+								"mainSeriesProperties.candleStyle.drawBorder": true, \
+								"mainSeriesProperties.candleStyle.borderColor": "#666666", \
+								"mainSeriesProperties.candleStyle.borderUpColor": ' + upBorderColor + ', \
+								"mainSeriesProperties.candleStyle.borderDownColor": ' + downBorderColor + ', \
+								"mainSeriesProperties.candleStyle.wickColor": "#737375", \
+								"mainSeriesProperties.candleStyle.barColorsOnPrevClose": false, \
+								"mainSeriesProperties.hollowCandleStyle.upColor": ' + upColor + ', \
+								"mainSeriesProperties.hollowCandleStyle.downColor": ' + downColor + ', \
+								"mainSeriesProperties.hollowCandleStyle.drawWick": true, \
+								"mainSeriesProperties.hollowCandleStyle.drawBorder": true, \
+								"mainSeriesProperties.hollowCandleStyle.borderColor": "#666666", \
+								"mainSeriesProperties.hollowCandleStyle.borderUpColor": ' + upBorderColor + ', \
+								"mainSeriesProperties.hollowCandleStyle.borderDownColor": ' + downBorderColor + ', \
+								"mainSeriesProperties.hollowCandleStyle.wickColor": "#737375", \
+								"mainSeriesProperties.haStyle.upColor": ' + upColor + ', \
+								"mainSeriesProperties.haStyle.downColor": ' + downColor + ', \
+								"mainSeriesProperties.haStyle.drawWick": true, \
+								"mainSeriesProperties.candleStyle.wickUpColor": "#225437", \
+                				"mainSeriesProperties.candleStyle.wickDownColor": "#225437", \
+								"mainSeriesProperties.haStyle.drawBorder": true, \
+								"mainSeriesProperties.haStyle.borderColor": "#666666", \
+								"mainSeriesProperties.haStyle.borderUpColor": ' + upBorderColor + ', \
+								"mainSeriesProperties.haStyle.borderDownColor": ' + downBorderColor + ', \
+								"mainSeriesProperties.haStyle.wickColor": "#737375", \
+								"mainSeriesProperties.haStyle.barColorsOnPrevClose": false, \
+								"mainSeriesProperties.priceLineColor":"#4b72e6",\
+								"scalesProperties.showStudyLastValue": true\
+							}, \
+							widgetbar: { \
+							    watchlist: '+wl_show+', \
+							    watchlist_settings: { \
+							        default_symbols: ['+wl_symbols.replace(/,\s*$/, "")+'] \
+							    } \
+							}, \
+							time_frames: [' + timeframesArrayStr + '], \
+							studies_overrides:{ \
+								"volume.volume.color.0": ' + downVolumeColor + ', \
+								"volume.volume.color.1": ' + upVolumeColor + ', \
+								"volume.volume.transparency": 50, \
+								"volume.volume ma.color": "#000000", \
+								"volume.volume ma.transparency": 70, \
+								"volume.volume ma.linewidth": 2, \
+								"volume.show ma": true, \
+								"volume.volume ma.plottype": "line", \
+								"volume.options.showStudyArguments" : false \
+							}, \
+							logo: { \
+								image: "' + cdnPath + '/includes/logo/investing_logo_new.png", \
+								link: "' + siteUrl + '" \
+							}, \
+							custom_css_url: "' + cdnPath + '/web/' + _params[ 'version' ] + '/custom.css", \
+							favorites: { \
+								'+ intervals +' \
+								chartTypes: ["Candles", "Area", ] } \
+							}); \
+						widget.onChartReady(function() { \
+						    console.log("widget",widget);\
+						    load_4_Layout( widget );\
+						    reportLoadedVersion(); \
+						    createAlertsButton(widget); \
+						    createSaveChartLayoutButton( widget ); \
+						    createButton( widget ); \
+						    widget.subscribe("onScreenshotReady",function( imageName ){screenshotReady( imageName );});\
+						    widget.subscribe("activeChartChanged",function(){passMessageToParent(JSON.stringify(prepareDataForMessage(widget,"addcurrentpairid")));});\
+						    widget.onShortcut("alt+a", function() {passMessageToParent(JSON.stringify(prepareDataForMessage(widget,"create_alert")));});\
+						    widget.onShortcut("ctrl+b", function() {passMessageToParent(JSON.stringify(prepareDataForMessage(widget,"fullscreen")));});\
+                        }); \
+					}); \
+				';
+				eval( uberString );
+			});
+
+			load_4_Layout = function( _widget ){
+				_params = getParams();
+				if(_params['init_page'] == 'layout_4'){
+					if(typeof(_params['m_pids']) != 'undefined' && _params['m_pids'].length > 0){
+						var pids = _params['m_pids'].split(',');
+						_widget.setLayout('4');
+						setTimeout(function(){_widget.chart(0).setSymbol(pids[0])},200);
+						setTimeout(function(){_widget.chart(1).setSymbol(pids[1])},400);
+						setTimeout(function(){_widget.chart(2).setSymbol(pids[2])},600);
+						setTimeout(function(){_widget.chart(3).setSymbol(pids[3])},800);
+					}else{
+						_widget.setLayout('4');
+						setTimeout(function(){_widget.chart(0).setSymbol('1')},200);
+						setTimeout(function(){_widget.chart(1).setSymbol('2')},400);
+						setTimeout(function(){_widget.chart(2).setSymbol('3')},600);
+						setTimeout(function(){_widget.chart(3).setSymbol('21')},800);
+					}
+				}
+			}
+			createButton = function( _widget ) {
+
+				_widget.createButton({ align:"right" })
+				.attr('title', "fullscreen")
+                .on('click', function (e) {
+                    passMessageToParent(JSON.stringify(prepareDataForMessage(_widget,'fullscreen')));
+                })
+				.removeClass('button')
+                .append($('<span class="button fullscreen iconed" title="Fullscreen mode (CTRL+B)"><svg xmlns="//www.w3.org/2000/svg" height="18" width="18" enable-background="new 0 0 595.3 841.9" viewBox="0 0 586.09999 586.09996"><path d="M172.6 367.9l-97.7 97.7L0 390.7v195.4h195.4l-74.9-74.9 97.7-97.7-45.6-45.6zM195.4 0H0v195.4l74.9-74.9 97.7 97.7 45.6-45.6-97.7-97.7L195.4 0zm195.3 0l74.9 74.9-97.7 97.7 45.6 45.6 97.7-97.7 74.9 74.9V0H390.7zm22.8 367.9l-45.6 45.6 97.7 97.7-74.9 74.9h195.4V390.7l-74.9 74.9-97.7-97.7z"></path></svg></span>'));
+			}
+
+            createSaveChartLayoutButton = function( _widget ) {
+
+                if( Number( _params[ 'user' ] ) && Number( _params[ 'client' ] ) ) return false;
+
+                _widget.createButton({ align:"right" })
+                .on('click', function (e) {
+                    passMessageToParent(JSON.stringify(prepareDataForMessage(_widget,'saveloadlayout')));
+                })
+                        .removeClass('button')
+                        .append($(saveLoadButtonsHtml()));
+            };
+
+    createAlertsButton = function( _widget ) {
+        _widget.createButton({ align:"left" })
+                .attr('title', "alerts")
+                .on('click', function (e) {
+                    passMessageToParent(JSON.stringify(prepareDataForMessage(_widget,'create_alert')));
+                    })
+                    .removeClass('button')
+                    .append($(createAlertButtonHtml()));
+            }
+
+    prepareDataForMessage = function(_widget,message)
+    {
+                    data = {};
+        switch (message){
+            case "fullscreen":
+                data.fullscreen = {};
+                break;
+            case "create_alert":
+                    data.create_alert = {};
+                    data.create_alert['pair_ID'] = window.tvcSavedData.symbolsInfo[_widget.activeChart().symbolExt().symbol].pair_ID;
+                    data.create_alert['closeVal'] = window.tvcSavedData.symbolsInfo[_widget.activeChart().symbolExt().symbol].close;
+                    data.create_alert['symbol'] = _widget.activeChart().symbolExt().symbol;
+                break;
+            case "addcurrentpairid":
+                data.addcurrentpairid = {};
+                data.addcurrentpairid = window.tvcSavedData.symbolsInfo[_widget.activeChart().symbolExt().symbol].pair_ID;
+                break;
+            case "saveloadlayout":
+                data.saveloadlayout = {};
+                break;
+        }
+
+                return data;
+    }
+
+            saveLoadButtonsHtml = function(){
+                var loadChartTooltip = 'Load Chart Layout';
+                var saveChartTooltip = 'Save Chart Layout saves not just some particular chart, it saves all charts for all symbols and intervals which you are modifying while working with this Layout';
+                if(Object.keys(tvcTranslations).length > 0){
+                    loadChartTooltip = (tvcTranslations['Load Chart Layout']) ? tvcTranslations['Load Chart Layout'].replace(/"/g, '&#39;') : 'Load Chart Layout';
+                    saveChartTooltip = (tvcTranslations['Save Chart Layout saves not just some particular chart, it saves all charts for all symbols and intervals which you are modifying while working with this Layout']) ? tvcTranslations['Save Chart Layout saves not just some particular chart, it saves all charts for all symbols and intervals which you are modifying while working with this Layout'].replace(/"/g, '&#39;') : 'Save Chart Layout saves not just some particular chart, it saves all charts for all symbols and intervals which you are modifying while working with this Layout';
+                }
+                return '<div class="save-load-buttons"><span class="load button first apply-common-tooltip" title="'+loadChartTooltip+'"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 18" width="26" height="18"><path d="M12 0C8.4 0 5.4 2.8 5.1 6.3 2 6.1.1 9 0 11.1 0 13.9 2.2 16 4.7 16h4.9l-1-1H4.7C2.8 15 1 13.3 1 11.2 1 9 3 6.7 6 7.4 6 3 9 1 12 1s3.7 1.2 5.1 2.9c1.5.1 3.3.6 4.2 1.7 1 1.5 1.2 2.6 1.2 4.2 1.4.4 2.5 1.5 2.5 2.7-.2 1.6-1.3 2.5-2.6 2.5h-5l-1 1h5.9c2.8 0 3.7-1.9 3.7-3.5s-1-3-2.5-3.4c0-1.6-.5-2.9-1.4-4.1-.9-1.2-2.7-2-4.5-2.1C16.3 1.2 14.3 0 12 0zm-2 7v5H7l6 6 6-6h-3V7h-6zm1 1h4v5h1.6L13 16.6 9.4 13H11V8z"></path></svg></span><span class="save button apply-common-tooltip last" title="'+saveChartTooltip+'"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 18" width="26" height="18"><path d="M12 0C8.4 0 5.4 2.8 5.1 6.3 2 6.1.1 9 0 11.1 0 13.9 2.2 16 4.7 16H9v-1H4.7C2.8 15 1 13.3 1 11.2 1 9 3 6.7 6 7.4 6 3 9 1 12 1s3.7 1.2 5.1 2.9c1.5.1 3.3.6 4.2 1.7 1 1.5 1.2 2.6 1.2 4.2 1.4.4 2.5 1.5 2.5 2.7-.2 1.6-1.3 2.5-2.6 2.5H17v1h5.3c2.8 0 3.7-1.9 3.7-3.5s-1-3-2.5-3.4c0-1.6-.5-2.9-1.4-4.1-.9-1.2-2.7-2-4.5-2.1C16.3 1.2 14.3 0 12 0zm1 6l-6 6h3v5h6v-5h3l-6-6z"></path></svg><span class="separator"></span></span><span class="title apply-common-tooltip" title="Rename Chart Layout" style="display: none;"><span type="text" maxlength="80"></span><span class="sizer"></span></span><span class="button with-arrow options last" style="display: none;"><span class="arrow-icon"></span></span></div>';
+            };
+
+    createAlertButtonHtml = function(){
+        return '<span class="button fullscreen iconed" title="'+ tvcDefines[_params.domain_ID]._createAlert +'"><img src="images/create_alert.png"></span>';
+    }
+
+			screenshotReady = function( _imageName ) {
+
+				_params = getParams();
+				var prefix = _params['prefix'] || 'www';
+				var siteUrl = 'https://' + prefix + '.investing.com/';
+				var baseUrl = 'https://tvc.investing.com/' + _params[ 'carrier' ] + '/' + _params[ 'time' ] + '/' + _params[ 'domain_ID' ] + '/' + _params[ 'lang_ID' ] + '/' + _params[ 'timezone_ID' ];
+
+				/*
+				var _navigator = {};
+				for (var i in navigator) _navigator[i] = navigator[i];
+
+				delete _navigator.plugins;
+				delete _navigator.mimeTypes;
+
+				//JSON.stringify( _navigator );
+				var nav_json = JSON.stringify( _navigator );
+
+				$.get( baseUrl + "/rpt", { ua: btoa( nav_json ), img: _imageName } );
+				*/
+			}
+
+			reportLoadedVersion = function() {
+
+				var _params = getParams();
+
+				console.log( "\r\n" );
+				console.log( "=================================================================================================================================================================" );
+				console.info( "Loaded TRADINGVIEW, version: " + TradingView.version() );
+				console.info( "Loaded INVESTING.COM - TVC_Connector\r\n - VERSION=" + _params[ 'version' ] + "\r\n - DOMAIN_ID=" + _params[ 'domain_ID' ] + "\r\n - LANG_ID=" + _params[ 'lang_ID' ] + "\r\n - TIMEZONE_ID=" + _params[ 'timezone_ID' ] + "\r\n - SESSION=" + _params[ 'session' ] + "\r\n - CLIENT=" + _params[ 'client' ] + "\r\n - USER=" + _params[ 'user' ] + "" + "\r\n - INIT_PAGE="+_params['init_page']  );
+				console.log( "=================================================================================================================================================================" );
+				console.log( "\r\n" );
+			};
+
+		</script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"rayId":"683e982f4f421ba4","token":"00ab903b5e184b1a9d53b0a7a5085300","version":"2021.8.1","si":10}'></script>
+</body>
+</html>
